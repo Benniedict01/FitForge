@@ -27,10 +27,10 @@ function HeroBoard() {
 }
 
 const features = [
-  { icon: ScanLine, title: "Board-first vision", text: "Finds an axis-aligned 8×8 board in the screenshot and flags visually busy squares for review." },
+  { icon: ScanLine, title: "Experimental board vision", text: "Proposes pieces on all 64 squares and flags low-confidence cells. Compare every square before analysis." },
   { icon: ShieldCheck, title: "No silent guesses", text: "Position details that pixels cannot prove stay editable. Illegal FENs are blocked before the engine runs." },
   { icon: Cpu, title: "Actual Stockfish", text: "Stockfish 19 Lite runs as WebAssembly on the server. Get a best move, three alternatives, evaluation and PV." },
-  { icon: Smartphone, title: "Shortcut-ready API", text: "Multipart image upload for iOS Shortcuts, plus a JSON FEN endpoint for immediate analysis." },
+  { icon: Smartphone, title: "Shortcut-ready API", text: "Multipart image upload returns a reviewable candidate; JSON FEN requests run Stockfish analysis." },
 ];
 
 export default function HomePage() {

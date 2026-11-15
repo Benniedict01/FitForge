@@ -68,7 +68,7 @@ describe("POST /api/analyze", () => {
     expect(data.evaluation.startsWith("+")).toBe(true);
   }, 15_000);
 
-  it("preserves mixed-case multipart boundaries and never claims piece recognition", async () => {
+  it("preserves mixed-case multipart boundaries and always requires review of screenshot recognition", async () => {
     const png = await boardPng();
     const boundary = "----WebKitFormBoundaryAaBbCcDd";
     const body = Buffer.concat([
@@ -85,8 +85,23 @@ describe("POST /api/analyze", () => {
     expect(response.status).toBe(200);
     const data = await response.json();
     expect(data).toMatchObject({ success: true, status: "needs_review", requiresReview: true, fen: null, bestMove: null, privacy: { retained: false } });
-    expect(data.detection.squareHints).toHaveLength(64);
-  }, 15_000);
+    expect(data.recognition).toMatchObject({
+      model: "Fenshot chess-tiles-v2",
+      placement: expect.any(String),
+      confidence: { mean: expect.any(Number), minimum: expect.any(Number), threshold: 0.7 },
+      bounds: { x: expect.any(Number), y: expect.any(Number), width: expect.any(Number), height: expect.any(Number) },
+      orientation: "unknown",
+      turn: null,
+      castling: "-",
+      ready: false,
+      fen: null,
+    });
+    expect(data.recognition.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "CASTLING_UNCERTAIN" }),
+      expect.objectContaining({ code: "TURN_UNAVAILABLE" }),
+    ]));
+    expect(data.message).toMatch(/review/i);
+  }, 30_000);
 
   it("returns a review error for unsupported image formats", async () => {
     const form = new FormData();

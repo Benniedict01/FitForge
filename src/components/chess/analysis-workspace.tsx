@@ -32,6 +32,7 @@ import {
   PIECE_GLYPHS,
   PIECE_NAMES,
   boardFromFen,
+  boardFromPlacement,
   boardToFen,
   emptyBoard,
   validatePositionFen,
@@ -45,22 +46,39 @@ import { SAMPLE_POSITIONS } from "@/lib/chess/samples";
 import { readDepth, writeDepth, type AnalysisDepth } from "@/lib/chess/preferences";
 import { saveAnalysisToHistory } from "@/lib/chess/history";
 
+type RecognitionMetadata = {
+  model: string;
+  placement: string;
+  orientation: BoardOrientation | "unknown";
+  orientationConfidence: number;
+  turn: SideToMove | null;
+  turnConfidence: number;
+  turnSource: string | null;
+  turnDetail: string | null;
+  castling: string;
+  enPassant: string;
+  confidence: { mean: number; minimum: number; threshold: number };
+  confidenceBySquare: Record<string, number>;
+  bounds: { x: number; y: number; width: number; height: number };
+  plausible: boolean;
+  ready: boolean;
+  warnings: { code: string; message: string }[];
+  fen: string | null;
+};
+
 type RecognitionResponse = {
   success?: boolean;
   status?: string;
   code?: string;
   error?: string;
   message?: string;
-  detection?: {
-    confidence: number;
-    bounds: { x: number; y: number; width: number; height: number };
-    squareSize: number;
-    squareHints: { square: string; activity: number; likelyPiece: boolean }[];
-  };
+  fen?: string | null;
+  bestMove?: string | null;
+  recognition?: RecognitionMetadata;
 };
 
 type ApiError = { success?: boolean; error?: string; message?: string; code?: string; status?: string };
-type FinishedResponse = { success: true; status: "finished"; result: string; message: string; fen: string; bestMove: null };
+type FinishedResponse = { success: true; status: "finished"; result: string; message: string; fen: string; bestMove: null; recognition?: RecognitionMetadata };
 
 const PIECE_OPTIONS = PIECE_CODES.map((code) => ({ code, label: PIECE_NAMES[code], glyph: PIECE_GLYPHS[code] }));
 const CASTLING_OPTIONS: { key: CastlingRight; label: string }[] = [
@@ -74,6 +92,10 @@ function rotateSquare(square: string) {
   return `${String.fromCharCode(104 - (square.charCodeAt(0) - 97))}${9 - Number(square[1])}`;
 }
 
+function rotateBoard(board: PositionBoard): PositionBoard {
+  return board.slice().reverse().map((row) => row.slice().reverse());
+}
+
 function errorMessage(response: Response, data: ApiError) {
   if (response.status === 429) return "Analysis limit reached. Wait a minute and try again.";
   return data.error || data.message || "The request could not be completed. Check your connection and try again.";
@@ -83,14 +105,14 @@ export function AnalysisWorkspace() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [board, setBoard] = useState<PositionBoard>(emptyBoard);
   const [orientation, setOrientation] = useState<BoardOrientation>("white");
-  const [turn, setTurn] = useState<SideToMove>("w");
+  const [turn, setTurn] = useState<SideToMove | "">("w");
   const [castling, setCastling] = useState<CastlingRight[]>([]);
   const [enPassant, setEnPassant] = useState("-");
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [depth, setDepth] = useState<AnalysisDepth>(14);
   const [file, setFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [detection, setDetection] = useState<RecognitionResponse["detection"] | null>(null);
+  const [recognition, setRecognition] = useState<RecognitionMetadata | null>(null);
   const [scanStatus, setScanStatus] = useState<"idle" | "scanning" | "found" | "not-found" | "error">("idle");
   const [scanMessage, setScanMessage] = useState("");
   const [isDragging, setIsDragging] = useState(false);
@@ -130,6 +152,7 @@ export function AnalysisWorkspace() {
   }, [imageUrl]);
 
   const currentFen = useMemo(() => {
+    if (!turn) return null;
     try {
       return boardToFen(board, turn, castling, enPassant.trim() || "-");
     } catch {
@@ -139,9 +162,12 @@ export function AnalysisWorkspace() {
 
   const validation = useMemo(() => currentFen ? validatePositionFen(currentFen) : null, [currentFen]);
   const markedSquares = useMemo(() => {
-    if (!detection) return [];
-    return detection.squareHints.filter((hint) => hint.likelyPiece).map((hint) => orientation === "white" ? hint.square : rotateSquare(hint.square));
-  }, [detection, orientation]);
+    if (!recognition) return [];
+    const squares = Object.entries(recognition.confidenceBySquare)
+      .filter(([, confidence]) => confidence < recognition.confidence.threshold)
+      .map(([square]) => square);
+    return recognition.orientation === "unknown" && orientation === "black" ? squares.map(rotateSquare) : squares;
+  }, [recognition, orientation]);
   const selectedAnalysisLine = selectedLine ?? (analysis ? {
     rank: 1,
     move: analysis.bestMove,
@@ -168,6 +194,38 @@ export function AnalysisWorkspace() {
     }
   }, [analysis, previewMove, selectedAnalysisLine]);
 
+  function applyRecognition(vision: RecognitionMetadata, fen: string | null) {
+    try {
+      setBoard(boardFromPlacement(vision.placement, vision.confidenceBySquare));
+    } catch {
+      setBoard(emptyBoard());
+    }
+    setRecognition(vision);
+    setOrientation(vision.orientation === "black" ? "black" : "white");
+    setSelectedSquare(null);
+    const validated = fen ? validatePositionFen(fen) : null;
+    if (validated?.ok) {
+      const parts = validated.game.fen().split(" ");
+      setTurn(parts[1] as SideToMove);
+      setCastling(parts[2] === "-" ? [] : parts[2].split("") as CastlingRight[]);
+      setEnPassant(parts[3]);
+    } else {
+      setTurn(vision.turn ?? "");
+      setCastling(vision.castling === "-" ? [] : vision.castling.split("") as CastlingRight[]);
+      setEnPassant(vision.enPassant);
+    }
+    setFenInput("");
+    setPositionConfirmed(false);
+    setRequiresVisualReview(true);
+    setReviewAcknowledged(false);
+    setConfirmationError("");
+    setAnalysis(null);
+    setFinished(null);
+    setSelectedLine(null);
+    setPreviewMove(false);
+    setAnalysisError("");
+  }
+
   function loadFenPosition(fen: string, message = "") {
     const result = validatePositionFen(fen);
     if (!result.ok) {
@@ -181,7 +239,9 @@ export function AnalysisWorkspace() {
     setEnPassant(parts[3]);
     setOrientation("white");
     setSelectedSquare(null);
-    setDetection(null);
+    setRecognition(null);
+    setFile(null);
+    setImageUrl(null);
     setScanStatus("idle");
     setScanMessage("");
     setAnalysis(null);
@@ -204,6 +264,9 @@ export function AnalysisWorkspace() {
     setCastling([]);
     setEnPassant("-");
     setSelectedSquare(null);
+    setRecognition(null);
+    setRequiresVisualReview(false);
+    setReviewAcknowledged(false);
     setPositionConfirmed(false);
     setConfirmationError("");
     setAnalysis(null);
@@ -211,6 +274,33 @@ export function AnalysisWorkspace() {
     setAnalysisError("");
     setSelectedLine(null);
     setPreviewMove(false);
+    setScanStatus("idle");
+    setScanMessage("");
+    setFenMessage("");
+  }
+
+  function removeScreenshot() {
+    setFile(null);
+    setImageUrl(null);
+    setRecognition(null);
+    setScanStatus("idle");
+    setScanMessage("");
+    setBoard(emptyBoard());
+    setTurn("w");
+    setCastling([]);
+    setEnPassant("-");
+    setOrientation("white");
+    setSelectedSquare(null);
+    setPositionConfirmed(false);
+    setRequiresVisualReview(false);
+    setReviewAcknowledged(false);
+    setConfirmationError("");
+    setAnalysis(null);
+    setFinished(null);
+    setAnalysisError("");
+    setSelectedLine(null);
+    setPreviewMove(false);
+    setFenInput("");
     setFenMessage("");
   }
 
@@ -227,7 +317,7 @@ export function AnalysisWorkspace() {
     }
     if (!["image/jpeg", "image/png", "image/webp"].includes(selected.type)) {
       setScanStatus("error");
-      setScanMessage("HEIC isn’t accepted by the web API yet. Export or share the screenshot as JPEG, PNG, or WebP.");
+      setScanMessage("HEIC isn’t accepted yet. Export or share the screenshot as JPEG, PNG, or WebP.");
       return;
     }
     const nextUrl = URL.createObjectURL(selected);
@@ -236,15 +326,16 @@ export function AnalysisWorkspace() {
       return nextUrl;
     });
     setFile(selected);
+    setRecognition(null);
     setRequiresVisualReview(true);
     setReviewAcknowledged(false);
-    setDetection(null);
     setScanStatus("scanning");
-    setScanMessage("Finding the board outline…");
+    setScanMessage("Locating the board, classifying all 64 squares, and reading visible game state…");
     setAnalysis(null);
     setFinished(null);
     setAnalysisError("");
     setPositionConfirmed(false);
+    setFenInput("");
     setFenMessage("");
     setBoard(emptyBoard());
     setTurn("w");
@@ -259,18 +350,20 @@ export function AnalysisWorkspace() {
     try {
       const response = await fetch("/api/analyze", { method: "POST", body: form });
       const data = await response.json() as RecognitionResponse;
-      if (!response.ok || data.status !== "needs_review" || !data.detection) {
-        setScanStatus("not-found");
+      const vision = data.recognition;
+      if (!response.ok || data.status !== "needs_review" || !vision) {
+        setScanStatus(response.status === 422 ? "not-found" : "error");
         setScanMessage(errorMessage(response, data));
+        setRecognition(null);
         return;
       }
-      setDetection(data.detection);
+
+      applyRecognition(vision, data.fen ?? vision.fen);
       setScanStatus("found");
-      const hintCount = data.detection.squareHints.filter((hint) => hint.likelyPiece).length;
-      setScanMessage(`Board outline found (${Math.round(data.detection.confidence * 100)}% detection confidence). ${hintCount} square${hintCount === 1 ? "" : "s"} have piece-like visual activity; confirm them against the screenshot.`);
+      setScanMessage(data.message || "The board was classified. Review all pieces and game-state fields before running Stockfish.");
     } catch {
       setScanStatus("error");
-      setScanMessage("Could not reach the recognition endpoint. The image stays in this tab; you can still build the position manually.");
+      setScanMessage("Could not reach the analysis service. The screenshot stays available here; the optional editor can still be used.");
     }
   }, [depth]);
 
@@ -292,6 +385,7 @@ export function AnalysisWorkspace() {
     const rankIndex = 8 - Number(square[1]);
     setBoard((current) => current.map((row, rowIndex) => row.map((cell, colIndex) => rowIndex === rankIndex && colIndex === fileIndex ? value : cell)));
     setPositionConfirmed(false);
+    setRequiresVisualReview(Boolean(file));
     setReviewAcknowledged(false);
     setConfirmationError("");
     setAnalysis(null);
@@ -300,6 +394,9 @@ export function AnalysisWorkspace() {
   }
 
   function handleOrientation(next: BoardOrientation) {
+    if (recognition?.orientation === "unknown" && next !== orientation) {
+      setBoard((current) => rotateBoard(current));
+    }
     setOrientation(next);
     setPositionConfirmed(false);
     setReviewAcknowledged(false);
@@ -318,6 +415,10 @@ export function AnalysisWorkspace() {
       setPositionConfirmed(false);
       return;
     }
+    if (!turn) {
+      setConfirmationError("Choose whether White or Black is to move; the screenshot did not provide a reliable cue.");
+      return;
+    }
     if (!currentFen) {
       setConfirmationError("Resolve every ? square as a piece or empty before continuing.");
       return;
@@ -333,6 +434,10 @@ export function AnalysisWorkspace() {
   }
 
   async function analyzePosition() {
+    if (!turn) {
+      setAnalysisError("Choose the side to move before requesting Stockfish analysis.");
+      return;
+    }
     if (!currentFen) {
       setAnalysisError("Resolve every uncertain square first.");
       return;
@@ -414,7 +519,7 @@ export function AnalysisWorkspace() {
         <div>
           <p className="eyebrow"><span /> POSITION WORKSPACE</p>
           <h1>Build the position.<br /><em>Then let it calculate.</em></h1>
-          <p className="workspace-subtitle">Image recognition locates the board frame. You review every piece and game-state detail before Stockfish returns a move.</p>
+          <p className="workspace-subtitle">A local vision model proposes a position from your screenshot. Compare and confirm every piece and game-state field before requesting Stockfish.</p>
         </div>
         <div className="workspace-heading-badges"><span className="engine-chip"><span className="live-indicator" /> Stockfish 19 Lite</span><span className="privacy-chip"><ShieldCheck size={13} /> No image retention</span></div>
       </div>
@@ -441,28 +546,40 @@ export function AnalysisWorkspace() {
               <div className="select-with-icon"><select id="sample-position" defaultValue="" onChange={(event) => { if (event.target.value) chooseSample(event.target.value); event.target.value = ""; }}><option value="" disabled>Select a sample position…</option>{SAMPLE_POSITIONS.map((sample) => <option value={sample.id} key={sample.id}>{sample.title}</option>)}</select><ChevronDown size={15} /></div>
             </div>
             {scanStatus === "scanning" && <div className="inline-status status-working"><LoaderCircle size={15} className="spin" /> {scanMessage}</div>}
-            {(scanStatus === "found" || scanStatus === "not-found" || scanStatus === "error") && <div className={`inline-status ${scanStatus === "found" ? "status-success" : "status-warning"}`} role="status">{scanStatus === "found" ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}<span>{scanMessage}</span></div>}
+            {(scanStatus === "found" || scanStatus === "not-found" || scanStatus === "error") && <div className={`inline-status ${scanStatus === "found" && recognition?.ready ? "status-success" : "status-warning"}`} role="status">{scanStatus === "found" && recognition?.ready ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}<span>{scanMessage}</span></div>}
             {imageUrl && file && (
+              <>
               <div className="screenshot-card">
-                <div className="screenshot-card-head"><span><FileImage size={14} /> {file.name}</span><button type="button" aria-label="Remove screenshot" className="icon-button compact" onClick={() => { setFile(null); setImageUrl(null); setDetection(null); setScanStatus("idle"); setScanMessage(""); setRequiresVisualReview(false); setReviewAcknowledged(false); }}><X size={15} /></button></div>
-                <div className="screenshot-preview"><img src={imageUrl} alt="Uploaded chess screenshot" />{detection && <div className="board-detection-outline" style={{ left: `${detection.bounds.x * 100}%`, top: `${detection.bounds.y * 100}%`, width: `${detection.bounds.width * 100}%`, height: `${detection.bounds.height * 100}%` }}><span>BOARD FRAME</span></div>}</div>
-                {detection && <p className="screenshot-caption"><ScanLine size={13} /> Board frame detected · not a piece classifier</p>}
+                <div className="screenshot-card-head"><span><FileImage size={14} /> {file.name}</span><button type="button" aria-label="Remove screenshot and recognized position" className="icon-button compact" onClick={removeScreenshot}><X size={15} /></button></div>
+                <div className="screenshot-preview"><img src={imageUrl} alt="Uploaded chess screenshot" />{recognition && <div className="board-detection-outline" style={{ left: `${recognition.bounds.x * 100}%`, top: `${recognition.bounds.y * 100}%`, width: `${recognition.bounds.width * 100}%`, height: `${recognition.bounds.height * 100}%` }}><span>BOARD CANDIDATE</span></div>}</div>
+                {recognition && <p className="screenshot-caption"><ScanLine size={13} /> Candidate board frame · {recognition.model} · review required</p>}
               </div>
+              {recognition && <div className="recognition-summary" aria-label="Screenshot recognition results">
+                <div className="recognition-summary-head"><span><Sparkles size={13} /> {recognition.model}</span><strong>EXPERIMENTAL</strong></div>
+                <div className="recognition-stats">
+                  <div><strong>{Math.round(recognition.confidence.mean * 100)}%</strong><span>mean square confidence</span></div>
+                  <div><strong>{Math.round(recognition.confidence.minimum * 100)}%</strong><span>lowest square confidence</span></div>
+                  <div><strong>{recognition.turn ? recognition.turn === "w" ? "White" : "Black" : "Unknown"}</strong><span>{recognition.turnSource || "side to move"}</span></div>
+                </div>
+                <p className="recognition-note">Confidence is model certainty, not accuracy. Compare every square; ? marks low-confidence squares. {recognition.orientation === "unknown" ? "The board viewpoint is uncertain—choose the correct side below and compare the mapping carefully." : "The indicated viewpoint is an estimate; check it against the screenshot."}</p>
+                {recognition.warnings.length > 0 && <ul className="recognition-warnings">{recognition.warnings.map((warning) => <li key={warning.code}><AlertCircle size={12} /><span>{warning.message}</span></li>)}</ul>}
+              </div>}
+              </>
             )}
             <div className="privacy-callout"><ShieldCheck size={15} /><span>Image bytes are processed in memory and discarded. The server does not save this screenshot.</span></div>
           </article>
 
           <article className="panel position-panel">
             <div className="panel-heading"><span className="panel-step">02</span><div><h2>Review the board</h2><p>Correct every square before analysis</p></div><span className="panel-count">{pieceCount} pieces</span></div>
-            <div className="review-warning"><Info size={15} /><p><strong>Important:</strong> this build finds the board outline and visual activity, but does not identify piece types or colours across arbitrary themes. Yellow dots are visual hints only. No piece is guessed into your FEN.</p></div>
+            <div className="review-warning"><Info size={15} /><p><strong>Experimental recognition:</strong> the model pre-fills a candidate board, not a guaranteed position. Check every piece and color against the screenshot; also verify side to move, castling rights, and en-passant. A still image cannot prove castling history, and move counters use neutral defaults. Stockfish stays locked until you review and confirm.</p></div>
             <div className="orientation-row"><span>Viewpoint</span><div className="segmented-control" role="group" aria-label="Board orientation"><button type="button" className={orientation === "white" ? "selected" : ""} onClick={() => handleOrientation("white")}>White bottom</button><button type="button" className={orientation === "black" ? "selected" : ""} onClick={() => handleOrientation("black")}>Black bottom</button></div></div>
             <ChessBoard board={board} orientation={orientation} selectedSquare={selectedSquare} markedSquares={markedSquares} onSquareClick={setSelectedSquare} label="Editable chess position" />
             <div className="board-helper-row"><span>{unknownCount ? <><AlertCircle size={13} /> {unknownCount} uncertain squares</> : <><CircleDot size={13} /> Tap any square to place or clear a piece</>}</span><button type="button" className="text-button" onClick={resetPosition}><RotateCcw size={13} /> Clear board</button></div>
             {selectedSquare && <div className="piece-picker" aria-label={`Choose piece for ${selectedSquare}`}><div className="piece-picker-head"><span>Set <strong>{selectedSquare}</strong></span><button type="button" className="icon-button compact" aria-label="Close piece picker" onClick={() => setSelectedSquare(null)}><X size={15} /></button></div><div className="piece-picker-row"><button type="button" className="piece-option piece-empty" onClick={() => { updateSquare(selectedSquare, null); setSelectedSquare(null); }}>Empty</button>{PIECE_OPTIONS.slice(0, 6).map((piece) => <button type="button" className="piece-option" key={piece.code} title={piece.label} aria-label={piece.label} onClick={() => { updateSquare(selectedSquare, piece.code); setSelectedSquare(null); }}><span className={piece.code === piece.code.toUpperCase() ? "piece-white" : "piece-black"}>{piece.glyph}</span></button>)}</div><div className="piece-picker-row">{PIECE_OPTIONS.slice(6).map((piece) => <button type="button" className="piece-option" key={piece.code} title={piece.label} aria-label={piece.label} onClick={() => { updateSquare(selectedSquare, piece.code); setSelectedSquare(null); }}><span className="piece-black">{piece.glyph}</span></button>)}<button type="button" className="piece-option piece-unknown" title="Mark uncertain" aria-label="Mark this square uncertain" onClick={() => { updateSquare(selectedSquare, "?"); setSelectedSquare(null); }}>?</button></div></div>}
 
             <div className="game-state-fields">
-              <label className="field-label" htmlFor="turn-select">Side to move</label>
-              <div className="select-with-icon"><select id="turn-select" value={turn} onChange={(event) => { setTurn(event.target.value as SideToMove); setPositionConfirmed(false); setReviewAcknowledged(false); }}><option value="w">White to move</option><option value="b">Black to move</option></select><ChevronDown size={15} /></div>
+              <label className="field-label" htmlFor="turn-select">Side to move{recognition?.turn === null && <span className="field-hint">No reliable cue—choose manually</span>}</label>
+              <div className="select-with-icon"><select id="turn-select" value={turn} onChange={(event) => { setTurn(event.target.value as SideToMove | ""); setPositionConfirmed(false); setReviewAcknowledged(false); }}><option value="" disabled>Choose side to move…</option><option value="w">White to move</option><option value="b">Black to move</option></select><ChevronDown size={15} /></div>
               <div className="field-label field-label-row"><span>Castling rights</span><span className="field-hint">Not visible in a screenshot</span></div>
               <div className="castling-grid">{CASTLING_OPTIONS.map((right) => <label key={right.key} className={castling.includes(right.key) ? "castling-option checked" : "castling-option"}><input type="checkbox" checked={castling.includes(right.key)} onChange={() => toggleCastling(right.key)} /><span className="checkmark">{castling.includes(right.key) && <Check size={11} />}</span>{right.label}</label>)}</div>
               <label className="field-label" htmlFor="en-passant">En-passant target <span className="field-hint">usually “-”</span></label>
@@ -472,7 +589,7 @@ export function AnalysisWorkspace() {
 
             {requiresVisualReview && <label className="position-review-ack"><input type="checkbox" checked={reviewAcknowledged} onChange={(event) => { setReviewAcknowledged(event.target.checked); setPositionConfirmed(false); setConfirmationError(""); }} /><span><strong>I reviewed this position against the screenshot.</strong> I checked the pieces, side to move, castling rights, and en-passant state.</span></label>}
             <div className="position-validation" role="status">
-              {confirmationError ? <><AlertCircle size={15} /><span>{confirmationError}</span></> : requiresVisualReview && !reviewAcknowledged ? <><Info size={15} /><span>Compare the board and game-state fields with the screenshot, then acknowledge your review.</span></> : positionConfirmed && validation?.ok ? <><CheckCircle2 size={15} /><span>Position is legal and reviewed. Ready for Stockfish.</span></> : validation?.ok ? <><Info size={15} /><span>Legal position. Compare it against the screenshot, then confirm.</span></> : <><AlertCircle size={15} /><span>{validation && !validation.ok ? validation.error : "Set the pieces and game state to validate this position."}</span></>}
+              {confirmationError ? <><AlertCircle size={15} /><span>{confirmationError}</span></> : requiresVisualReview && !reviewAcknowledged ? <><Info size={15} /><span>Compare the board and game-state fields with the screenshot, then acknowledge your review.</span></> : positionConfirmed && validation?.ok ? <><CheckCircle2 size={15} /><span>Position is legal and reviewed. Ready for Stockfish.</span></> : validation?.ok ? <><Info size={15} /><span>Legal position. Compare it against the screenshot, then confirm.</span></> : <><AlertCircle size={15} /><span>{!turn ? "Choose the side to move; the screenshot did not provide a reliable cue." : validation && !validation.ok ? validation.error : "Set the pieces and game state to validate this position."}</span></>}
             </div>
             <div className="position-action-row"><button type="button" className="button button-outline" onClick={confirmPosition} disabled={!validation?.ok || (requiresVisualReview && !reviewAcknowledged)}><CheckCircle2 size={15} /> Confirm position</button><button type="button" className="text-button" onClick={() => setShowFenTools((value) => !value)}><Clipboard size={14} /> FEN tools {showFenTools ? <ChevronUp size={13} /> : <ChevronDown size={13} />}</button></div>
             {showFenTools && <div className="fen-tools"><label htmlFor="fen-input" className="field-label">Paste a full six-field FEN</label><textarea id="fen-input" className="fen-textarea" rows={3} value={fenInput} onChange={(event) => setFenInput(event.target.value)} placeholder="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" spellCheck={false} /><div className="fen-tool-actions"><button type="button" className="button button-outline button-small" onClick={importFen}>Load FEN</button><button type="button" className="text-button" onClick={() => void copyFen()} disabled={!currentFen}><Clipboard size={13} /> Copy current FEN</button></div>{fenMessage && <span className="fen-feedback" role="status">{fenMessage}</span>}</div>}

@@ -46,12 +46,15 @@ test("screenshot position requires explicit review before Stockfish analysis", a
     mimeType: "image/png",
     buffer: await syntheticBoardScreenshot(),
   });
-  await expect(page.getByText(/Board outline found/)).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator(".recognition-summary")).toBeVisible({ timeout: 10_000 });
 
   const confirm = page.getByRole("button", { name: /Confirm position/ });
   await expect(confirm).toBeDisabled();
+  const analyze = page.getByRole("button", { name: /Analyze position/i });
+  await expect(analyze).toBeDisabled();
+  await page.getByRole("button", { name: /Clear board/ }).click();
   const board = page.getByRole("grid", { name: "Editable chess position" });
-  await board.getByRole("button", { name: "h8, Empty" }).click();
+  await board.getByRole("button", { name: /^h8,/ }).click();
   await page.getByRole("button", { name: "Black king" }).click();
   await board.getByRole("button", { name: "f6, Empty" }).click();
   await page.getByRole("button", { name: "White king" }).click();
@@ -62,7 +65,6 @@ test("screenshot position requires explicit review before Stockfish analysis", a
   await page.getByLabel(/I reviewed this position against the screenshot/).check();
   await expect(confirm).toBeEnabled();
   await confirm.click();
-  const analyze = page.getByRole("button", { name: /Analyze position/i });
   await expect(analyze).toBeEnabled();
   await analyze.click();
   await expect(page.getByText("BEST MOVE")).toBeVisible({ timeout: 15_000 });

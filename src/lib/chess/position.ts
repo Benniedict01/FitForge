@@ -50,6 +50,34 @@ export function boardFromFen(fen: string): PositionBoard {
   );
 }
 
+export function boardFromPlacement(
+  placement: string,
+  confidenceBySquare?: Record<string, number>,
+  confidenceFloor = 0.7,
+): PositionBoard {
+  const ranks = placement.split("/");
+  if (ranks.length !== 8) throw new Error("The recognized board must contain eight ranks.");
+  return ranks.map((rank, rowIndex) => {
+    const row: SquareValue[] = [];
+    const addSquare = (piece: SquareValue) => {
+      const file = row.length;
+      const square = `${String.fromCharCode(97 + file)}${8 - rowIndex}`;
+      const confidence = confidenceBySquare?.[square];
+      row.push(confidence !== undefined && confidence < confidenceFloor ? "?" : piece);
+    };
+    for (const character of rank) {
+      if (/^[1-8]$/.test(character)) {
+        for (let index = 0; index < Number(character); index += 1) addSquare(null);
+        continue;
+      }
+      if (!PIECE_CODES.includes(character as PieceCode)) throw new Error("The recognized board contains an invalid piece code.");
+      addSquare(character as PieceCode);
+    }
+    if (row.length !== 8) throw new Error("The recognized board must contain exactly 64 squares.");
+    return row;
+  });
+}
+
 export function boardToFen(
   board: PositionBoard,
   turn: SideToMove,

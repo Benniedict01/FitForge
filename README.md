@@ -1,8 +1,8 @@
 # ChessVision AI
 
-A mobile-first chess position review and Stockfish analysis app built with **Next.js 16, React 19, TypeScript, chess.js, Sharp, and Stockfish 19 Lite WebAssembly**.
+A mobile-first chess screenshot review and Stockfish analysis app built with **Next.js 16, React 19, TypeScript, chess.js, Sharp, an experimental Fenshot/ONNX vision model, local Tesseract.js OCR, and Stockfish 19 Lite WebAssembly**.
 
-> **Recognition limitation, stated plainly:** the current computer-vision pipeline detects an axis-aligned 8×8 board and flags squares with unusual visual activity. It does **not** reliably identify piece type or colour across arbitrary board themes. It therefore never generates a FEN or best move from an image alone. Upload a screenshot, review/correct the pieces and game state, then run the real engine. This is the safe alternative to silently inventing a position. The image-only API returns `needs_review` or a clear error, not a fabricated move.
+> **Recognition limitation, stated plainly:** screenshot recognition is experimental and not broadly benchmarked. The API proposes board pieces and may infer orientation or side to move, but model confidence is not accuracy; a single Chess.com fixture worked locally while a generated starting-board image produced a poor prediction. Every image-only request returns `needs_review` and **never starts Stockfish**. Compare all 64 squares and verify side to move, castling rights, en-passant, and counters before confirming. Still images cannot prove castling history or general move history; uncertain squares are marked `?`. The model runs on the server and no external recognition API is called.
 
 ## Run locally
 
@@ -42,9 +42,9 @@ There are no AI keys and no external image-recognition service. Do not put secre
 
 - Landing page, responsive analysis workspace, settings, local analysis history, and iPhone Shortcut setup guide.
 - JPEG / PNG / WebP uploads, drag-and-drop, a 10 MB request limit, 40 MP decoded-image cap, EXIF orientation correction, and file-signature validation.
-- Local image processing with Sharp. A colour-pattern search detects a square checkerboard frame in ordinary axis-aligned screenshots and returns a confidence score plus 64 square-activity hints. This is **board localization / visual triage**, not piece recognition.
-- A visual screenshot preview with the detected board outline, a 64-square editable board, uncertain-square markers, White/Black-bottom orientation, manual piece placement, side-to-move selection, castling-right controls, en-passant input, and full FEN import/export.
-- chess.js FEN validation and legal move / SAN validation. Invalid or incomplete positions cannot reach Stockfish. Side to move, castling rights, and en-passant are not visually inferable from a still image and must be reviewed.
+- Local image preprocessing with Sharp, the experimental Fenshot ONNX board/piece classifier, and optional local Tesseract.js OCR. The image route returns board bounds, a candidate placement, per-square confidence, state-cue warnings, and sometimes a candidate FEN; it always requires review and never starts Stockfish.
+- A visual screenshot preview with candidate board bounds, prefilled recognized pieces, low-confidence `?` markers, White/Black-bottom orientation, manual piece placement, side-to-move selection, castling-right controls, en-passant input, and full FEN import/export.
+- chess.js FEN validation and legal move / SAN validation. Invalid or incomplete positions cannot reach Stockfish. Side to move may have visual or positional cues, but castling history and general move history are not recoverable from a still board and require review.
 - **Stockfish 19 Lite single-threaded WASM**, run through UCI in the Node.js API. It calculates a best move, up to three alternative lines, evaluation from White's perspective, principal variation, and searched depth. Depths 10 / 14 / 18 are available in the UI; the API accepts depths 8–18.
 - Checkmate, stalemate, draw, timeout, invalid-FEN, unsupported-image, no-board, and engine failure states.
 - Mobile-friendly board controls, move arrow / square highlights, best-move preview, alternatives, principal variation, and device-local history. History contains FEN / engine output only; users can delete it in Settings.
@@ -52,15 +52,17 @@ There are no AI keys and no external image-recognition service. Do not put secre
 
 ### Computer-vision boundaries
 
-A screenshot classifier that works across Chess.com, Lichess, custom piece sets, board colours, overlays, piece scaling, and rotated orientations requires a trained, licensed model and representative test data. No such model is bundled in this repository. A classical checkerboard detector cannot establish whether a symbol is a white bishop or black knight, and a screenshot cannot reveal every FEN field. ChessVision therefore:
+The image path uses [`@scoriiu/fenshot`](https://github.com/scoriiu/fenshot) and its bundled ONNX tile classifier, with local Tesseract.js used only as optional text evidence. The package/model is declared MIT upstream, but training-data provenance has not been independently reviewed. Upstream coverage claims are not a benchmark. Only one Chess.com fixture was successfully processed locally and not compared against its labels; a generated starting-board image was misclassified. Do not assume accuracy across sites, themes, custom pieces, overlays, or rotated/partial boards.
+
+ChessVision therefore:
 
 1. normalizes and inspects the image in memory;
-2. estimates the board rectangle and marks likely high-activity squares;
-3. leaves every piece identity to a human review or a pasted full FEN;
-4. validates the resulting position with chess.js;
-5. returns a Stockfish move only after that validation.
+2. proposes piece identities for all 64 squares and reports confidence per square (confidence is not a probability of correctness);
+3. marks low-confidence cells `?`, and tries conservative orientation / turn cues, with visible warnings when those are unavailable or conflict;
+4. requires the user to compare the whole board and game-state fields, explicitly acknowledge review, and pass legal-position validation;
+5. sends only the confirmed FEN to Stockfish. Image-only API requests never invoke the engine and never return a best move.
 
-The detector currently handles **axis-aligned square boards**. It does not correct perspective distortion, guarantee board detection on every theme, or infer whether White or Black is at the bottom. Use the orientation toggle and manual editor when needed. A FEN import is the fastest route when a trusted FEN is already available.
+A still board cannot establish castling history or general move counters. En-passant can be inferred only from a possible last-move highlight, and that heuristic is not guaranteed. When orientation is ambiguous (especially in pawnless positions), turn evidence conflicts, the prediction is implausible, or square confidence is low, correct the candidate in the editor or paste a trusted FEN. A FEN import is the fastest route when a trusted FEN is already available.
 
 ## Project map
 
@@ -79,10 +81,11 @@ src/components/
   chess/board.tsx               Editable / result chessboard
 src/lib/
   chess/position.ts             FEN, board mapping, legal-position guards
-  chess/vision.ts               Checkerboard localization + square cues
+  chess/vision.ts               Legacy checkerboard and square cues
+  chess/screenshot-state.ts     Orientation / turn cues and placement guards
   chess/samples.ts              Tested sample positions
   chess/history.ts              Versioned localStorage history
-  server/image-recognition.ts   Image type / pixel limits + Sharp pipeline
+  server/image-recognition.ts   Sharp, ONNX classifier, optional OCR, warnings
   server/stockfish.ts           UCI process, MultiPV and score formatting
   server/rate-limit.ts          Bounded per-process request limiter
 tests/
@@ -154,7 +157,7 @@ curl -X POST "https://your-domain.example/api/analyze" \
   -F "depth=14"
 ```
 
-Multipart image field name: `image`. Supported formats: `image/jpeg`, `image/png`, `image/webp`. Maximum upload: **10 MB**. HEIC must be exported / converted to JPEG by the Shortcut. If a clear square board is found, the response has `success: true`, `status: "needs_review"`, `requiresReview: true`, board bounds, square hints, `fen: null`, and `bestMove: null`. If there is no clear board, the response is HTTP 422. The service does not retain the uploaded bytes.
+Multipart image field name: `image`. Supported formats: `image/jpeg`, `image/png`, `image/webp`. Maximum upload: **10 MB**. HEIC must be exported / converted to JPEG by the Shortcut. When a board is found, the response has `success: true`, `status: "needs_review"`, `requiresReview: true`, normalized board bounds, a candidate piece placement, per-square confidence, warnings, and possibly a candidate `fen`. `bestMove` is always `null` for image-only requests; the image route never invokes Stockfish. If no board is found, the response is HTTP 422. The service does not retain the uploaded bytes. Confidence scores describe model certainty, not recognition accuracy.
 
 To analyze a reviewed screenshot position in the same API, submit its complete FEN as JSON. A multipart form may also contain both `image` and `fen`; when `fen` is present it is validated and analyzed.
 
@@ -165,7 +168,7 @@ To analyze a reviewed screenshot position in the same API, submit its complete F
 - 415 — unsupported media type / image format
 - 422 — no clear board found in an image
 - 429 — per-process request limit (20 requests per IP per minute)
-- 503 — Stockfish initialization, timeout, or engine result failure
+- 503 — local vision model initialization or Stockfish initialization, timeout, or engine result failure
 
 The limiter is deliberately dependency-free and **per process / best effort**. For a public multi-instance deployment, configure a shared edge/Redis rate limit and trusted proxy IP handling. Public endpoints can be abused; use host-level abuse controls appropriate to your deployment.
 
@@ -211,7 +214,7 @@ npm test
 npm run build
 ```
 
-The unit/API suite exercises FEN validation, 64-square reconstruction, checkerboard detection on a synthetic screenshot, no-board handling, multipart uploads, invalid images, real Stockfish WASM search, legal best moves, and MultiPV alternatives. Browser tests cover the landing-to-workspace flow, a real mate-in-one analysis, and mobile overflow. Run them with a local server and installed Playwright browsers:
+The unit/API suite exercises FEN validation, low-confidence square handling, turn/orientation evidence, screenshot upload and recognition response shape, invalid images, real Stockfish WASM search, legal best moves, and MultiPV alternatives. The synthetic/API cases verify behavior and response structure, not recognition accuracy. Browser tests cover the landing-to-workspace flow, a real mate-in-one analysis, and mobile overflow. Run them with a local server and installed Playwright browsers:
 
 ```bash
 npm run dev

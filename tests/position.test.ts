@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boardFromFen, boardToFen, emptyBoard, validatePositionFen } from "@/lib/chess/position";
+import { boardFromFen, boardFromPlacement, boardToFen, emptyBoard, validatePositionFen } from "@/lib/chess/position";
 import { SAMPLE_POSITIONS } from "@/lib/chess/samples";
 
 describe("FEN and position validation", () => {
@@ -16,6 +16,18 @@ describe("FEN and position validation", () => {
     const board = emptyBoard();
     board[0][0] = "?";
     expect(() => boardToFen(board, "w", [], "-")).toThrow(/uncertain square/i);
+  });
+
+  it("marks low-confidence occupied and empty predictions as uncertain", () => {
+    const board = boardFromPlacement("4k3/8/8/8/8/8/8/4K3", { e8: 0.4, a1: 0.2, e1: 0.99 });
+    expect(board[0][4]).toBe("?");
+    expect(board[7][0]).toBe("?");
+    expect(board[0][0]).toBeNull();
+    expect(board[7][4]).toBe("K");
+  });
+
+  it("rejects malformed piece placement", () => {
+    expect(() => boardFromPlacement("4k3/8/8/8/8/8/8/4K2")).toThrow(/64 squares/i);
   });
 
   it("rejects malformed and impossible positions", () => {

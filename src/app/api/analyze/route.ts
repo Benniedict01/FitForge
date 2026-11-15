@@ -192,33 +192,44 @@ async function analyzeScreenshot(file: File) {
   if (file.size > MAX_IMAGE_BYTES) return json({ success: false, status: "error", code: "IMAGE_TOO_LARGE", error: "Image is larger than the 10 MB upload limit." }, 413);
   const mime = file.type.toLowerCase();
   if (!["image/jpeg", "image/png", "image/webp"].includes(mime)) {
-    return json({ success: false, status: "error", code: "UNSUPPORTED_IMAGE", error: "Use a JPEG, PNG, or WebP screenshot. HEIC files must be converted by the Shortcut or exported as JPEG." }, 415);
+    return json({ success: false, status: "error", code: "UNSUPPORTED_IMAGE", error: "Use a JPEG, PNG, or WebP screenshot. HEIC files must be converted to JPEG." }, 415);
   }
   try {
     const inspected = await inspectChessScreenshot(Buffer.from(await file.arrayBuffer()), mime);
-    if (!inspected.detection) {
+    if (!inspected.detection || !inspected.recognition) {
       return json({
         success: false,
         status: "error",
         code: "BOARD_NOT_FOUND",
-        error: "No clear, axis-aligned 8×8 chessboard was detected. Crop the screenshot to the board or set up the position manually.",
+        error: "No clear, axis-aligned 8×8 chessboard was detected. Use a screenshot with the full board visible.",
       }, 422);
     }
+
+    const recognition = inspected.recognition;
+    const details = recognition.warnings.map((warning) => warning.message).join(" ");
     return json({
       success: true,
       status: "needs_review",
       requiresReview: true,
-      fen: null,
+      fen: recognition.fen,
       bestMove: null,
-      message: "Board bounds detected. Piece identity, side to move, castling rights, and en-passant state are not inferred; review the board before requesting a move.",
-      detection: inspected.detection,
+      message: recognition.ready
+        ? "The board and a candidate position were recognized. Review every square, side to move, castling right, and en-passant field before asking Stockfish to analyze it."
+        : `The board was detected, but a confidence or game-state check needs correction. Review the warnings and marked squares before confirming the position.${details ? ` ${details}` : ""}`,
+      recognition,
       image: { width: inspected.width, height: inspected.height },
       privacy: { retained: false },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "The image could not be decoded.";
-    const status = message.startsWith("Unsupported image") ? 415 : 422;
-    return json({ success: false, status: "error", code: status === 415 ? "UNSUPPORTED_IMAGE" : "IMAGE_PROCESSING_FAILED", error: message }, status);
+    console.error("Screenshot recognition failed:", error);
+    const message = error instanceof Error ? error.message : "The screenshot could not be processed.";
+    if (message.startsWith("Unsupported image")) {
+      return json({ success: false, status: "error", code: "UNSUPPORTED_IMAGE", error: message }, 415);
+    }
+    if (/vision model|onnx|wasm|model returned/i.test(message)) {
+      return json({ success: false, status: "error", code: "VISION_MODEL_UNAVAILABLE", error: "The local chess-recognition model could not start. Try again or use the optional position editor." }, 503);
+    }
+    return json({ success: false, status: "error", code: "IMAGE_PROCESSING_FAILED", error: message }, 422);
   }
 }
 

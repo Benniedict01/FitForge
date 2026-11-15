@@ -6,5 +6,9 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   resolve: { alias: { "@": path.resolve(root, "src") } },
-  test: { include: ["tests/**/*.test.ts"], environment: "node" },
+  test: {
+    include: ["tests/**/*.test.ts"],
+    environment: "node",
+    server: { deps: { inline: ["@scoriiu/fenshot"] } },
+  },
 });
