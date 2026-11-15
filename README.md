@@ -1,92 +1,208 @@
-# FitForge
+# ChessVision AI
 
-A complete mobile-first workout planner built with **Next.js 16 (App Router), React 19, TypeScript, and Tailwind CSS 4**. Includes a server-side OpenAI integration and a fully working, equipment-aware local generator. No account or external database is required.
+A mobile-first chess position review and Stockfish analysis app built with **Next.js 16, React 19, TypeScript, chess.js, Sharp, and Stockfish 19 Lite WebAssembly**.
 
-## Open the app
+> **Recognition limitation, stated plainly:** the current computer-vision pipeline detects an axis-aligned 8×8 board and flags squares with unusual visual activity. It does **not** reliably identify piece type or colour across arbitrary board themes. It therefore never generates a FEN or best move from an image alone. Upload a screenshot, review/correct the pieces and game state, then run the real engine. This is the safe alternative to silently inventing a position. The image-only API returns `needs_review` or a clear error, not a fabricated move.
 
-The project has already been installed, built, and started in the workspace. Open the **FitForge live preview** to use it from your phone.
+## Run locally
 
-To run it elsewhere, use Node.js 20.9+ (Node.js 22 LTS recommended):
+Requirements: **Node.js 22.12+** and npm. No API keys, database, or paid service are required.
 
 ```bash
-cd fitforge
 npm ci
 npm run dev
 ```
 
-Open `http://localhost:3000`. The development server binds to `0.0.0.0`, so it also works in hosted preview environments. Browser requests use the relative `/api/generate-workout` URL—there are no browser-facing localhost service URLs.
+Open <http://localhost:3000>. The dev server binds to `0.0.0.0` for hosted previews.
 
 For production:
 
 ```bash
+npm run typecheck
+npm run lint
+npm test
 npm run build
 npm start
 ```
 
-Deploy the project directory to a **Node-capable Next.js host** (for example, Vercel), not static-only hosting. Keep `package-lock.json` for reproducible installs.
+The app requires a **Node.js server runtime**. It is not a static export: the analysis route starts the bundled Stockfish WASM process. The included `Dockerfile` is a small deployment starting point. Use a Node-capable host that permits this route to launch a child process and allows at least 30 seconds for a deep search.
 
-## Optional OpenAI connection
+## Environment variables
 
-The app works immediately **without an API key**. To enable AI enhancement, copy `.env.example` to `.env.local` and set:
+No environment variables are required. Optional:
 
 ```dotenv
-OPENAI_API_KEY=your_real_key_here
-OPENAI_MODEL=gpt-4o-mini
+# Used only for canonical Open Graph metadata; it is public, not a secret.
+NEXT_PUBLIC_SITE_URL=https://your-domain.example
 ```
 
-Restart the server after changing environment variables. On a hosting platform, set these in its server environment settings. **Never** add a `NEXT_PUBLIC_` prefix, commit a real key, or put it in client code.
-
-The server asks OpenAI for a strict JSON-schema response containing a title, coaching tip, and exercise IDs. It validates the selected IDs against the permitted equipment, experience, and muscle group, rejects duplicates, checks full-body coverage, and uses the authored exercise library for instructions. Sets, reps, rest, and estimated duration are calculated on the server. Missing keys, timeouts, refusals, and invalid AI selections all fall back to the local generator. The workout clearly identifies whether it came from AI enhancement or the local library.
-
-Live provider calls require your own valid key and have not been made as part of setup; provider success/failure paths are covered with mocked tests.
+There are no AI keys and no external image-recognition service. Do not put secrets in frontend variables.
 
 ## What works
 
-- Premium responsive landing page, local fonts, optimized hero asset, mobile navigation, and reduced-motion support.
-- Five-step accessible builder: all nine body parts, seven equipment choices, three experience levels, four goals, and five time budgets.
-- Equipment- and experience-filtered workouts, full-body movement coverage, and mixed-equipment variety.
-- Warm-up, exercises, sets, reps or timed holds, rest, instructions, difficulty, coaching, and cool-down.
-- Working sets respect the time budget and experience-based volume caps. Estimates include preparation, recovery, and exercise transitions; real training time will vary. A short focused plan may be shorter than the available budget rather than add unnecessary volume.
-- Start workout, individual set checkboxes, current movement/set, rest countdown, add 15 seconds, skip rest, and progress percentage.
-- Completion summary, plan review, recovery prompts, and generate-another flow.
-- Latest workout and set progress persist locally across refreshes. Timers use an absolute deadline, so returning after a backgrounded tab stays accurate. If storage is blocked, the current in-memory session still works, but cannot be restored after a reload.
-- Helpful empty, loading, connection, invalid-input, and error states.
-- The requested fitness-safety disclaimer and movement-specific safety cues. No medical approval claims, testimonials, or invented usage statistics.
+- Landing page, responsive analysis workspace, settings, local analysis history, and iPhone Shortcut setup guide.
+- JPEG / PNG / WebP uploads, drag-and-drop, a 10 MB request limit, 40 MP decoded-image cap, EXIF orientation correction, and file-signature validation.
+- Local image processing with Sharp. A colour-pattern search detects a square checkerboard frame in ordinary axis-aligned screenshots and returns a confidence score plus 64 square-activity hints. This is **board localization / visual triage**, not piece recognition.
+- A visual screenshot preview with the detected board outline, a 64-square editable board, uncertain-square markers, White/Black-bottom orientation, manual piece placement, side-to-move selection, castling-right controls, en-passant input, and full FEN import/export.
+- chess.js FEN validation and legal move / SAN validation. Invalid or incomplete positions cannot reach Stockfish. Side to move, castling rights, and en-passant are not visually inferable from a still image and must be reviewed.
+- **Stockfish 19 Lite single-threaded WASM**, run through UCI in the Node.js API. It calculates a best move, up to three alternative lines, evaluation from White's perspective, principal variation, and searched depth. Depths 10 / 14 / 18 are available in the UI; the API accepts depths 8–18.
+- Checkmate, stalemate, draw, timeout, invalid-FEN, unsupported-image, no-board, and engine failure states.
+- Mobile-friendly board controls, move arrow / square highlights, best-move preview, alternatives, principal variation, and device-local history. History contains FEN / engine output only; users can delete it in Settings.
+- No stealth, screen scraping, or automated interaction with chess websites.
+
+### Computer-vision boundaries
+
+A screenshot classifier that works across Chess.com, Lichess, custom piece sets, board colours, overlays, piece scaling, and rotated orientations requires a trained, licensed model and representative test data. No such model is bundled in this repository. A classical checkerboard detector cannot establish whether a symbol is a white bishop or black knight, and a screenshot cannot reveal every FEN field. ChessVision therefore:
+
+1. normalizes and inspects the image in memory;
+2. estimates the board rectangle and marks likely high-activity squares;
+3. leaves every piece identity to a human review or a pasted full FEN;
+4. validates the resulting position with chess.js;
+5. returns a Stockfish move only after that validation.
+
+The detector currently handles **axis-aligned square boards**. It does not correct perspective distortion, guarantee board detection on every theme, or infer whether White or Black is at the bottom. Use the orientation toggle and manual editor when needed. A FEN import is the fastest route when a trusted FEN is already available.
 
 ## Project map
 
 ```text
 src/app/
-  page.tsx                         Landing page
-  globals.css                      Tailwind entry + responsive design system
-  layout.tsx                       Metadata, local fonts, shared layout
-  workout/page.tsx                 Workout route
-  api/generate-workout/route.ts     Validated server endpoint
+  page.tsx                     Landing page
+  analyze/page.tsx             Screenshot + position editor + results
+  settings/page.tsx            Engine depth and local-data controls
+  history/page.tsx             Browser-local saved analyses
+  shortcuts/page.tsx           iPhone setup instructions
+  api/analyze/route.ts         Multipart image and JSON FEN API
+  globals.css                  Responsive dark design system
 src/components/
-  builder/workout-builder.tsx       Five-step form + generation request
-  workout/                         Workout session, cards, timer, completion
-  ui/                              Logo, muscle illustrations, equipment icons
-  header.tsx / hero.tsx / footer.tsx
+  header.tsx / footer.tsx
+  chess/analysis-workspace.tsx  Upload, board editor, engine result
+  chess/board.tsx               Editable / result chessboard
 src/lib/
-  workouts/schema.ts               Shared Zod schemas and types
-  workouts/exercises.ts            Authored exercise catalog and technique cues
-  workouts/generator.ts            Local selection + server-side prescriptions
-  workouts/storage.ts              Versioned local workout/progress persistence
-  server/workout-service.ts        Server-only OpenAI adapter + fallback
-  server/rate-limit.ts             Bounded per-instance request limiter
-  utils.ts                         Shared utilities and safety disclaimer
-public/
-  fonts/                           Bundled fonts and SIL Open Font Licenses
-  images/athlete-hero.webp          Optimized, AI-generated editorial hero
+  chess/position.ts             FEN, board mapping, legal-position guards
+  chess/vision.ts               Checkerboard localization + square cues
+  chess/samples.ts              Tested sample positions
+  chess/history.ts              Versioned localStorage history
+  server/image-recognition.ts   Image type / pixel limits + Sharp pipeline
+  server/stockfish.ts           UCI process, MultiPV and score formatting
+  server/rate-limit.ts          Bounded per-process request limiter
 tests/
-  generator.test.ts                All 3,780 preference combinations + invariants
-  service.test.ts                  Mocked OpenAI success/fallback tests
-  api.test.ts                      Response, validation, size, rate-limit tests
-  e2e/workout.spec.ts               Desktop, phone, and iPhone WebKit workflows
-  e2e/accessibility.spec.ts         Automated WCAG A/AA checks
+  api.test.ts                   Multipart and FEN endpoint tests
+  vision.test.ts                Synthetic-board and blank-image tests
+  engine.test.ts                Real Stockfish WASM MultiPV test
+  position.test.ts              FEN and legality tests
+tests/e2e/
+  app.spec.ts                    Landing, sample engine, and mobile checks
+public/engine/
+  stockfish-19-lite-single.js    Stockfish 19 Lite single-threaded WASM glue
+  stockfish-19-lite-single.wasm  ~1.8 MB engine module
+licenses/
+  Stockfish-GPL-3.0.txt          Stockfish GPLv3 license text
 ```
 
-## Tests and checks
+## Sample positions
+
+The landing page and workspace include three valid FEN samples:
+
+- **Starting position** — engine / notation baseline.
+- **Mate in one** — White has a forced finish; Stockfish should return a mate score.
+- **Pawn endgame** — sparse position for endgame analysis.
+
+The engine calculates each result at runtime. Samples are not canned move outputs.
+
+## API reference
+
+### `POST /api/analyze`
+
+Accepts **either** JSON containing a full FEN, or `multipart/form-data` containing an image (optionally a FEN).
+
+#### JSON position request
+
+```http
+POST /api/analyze
+Content-Type: application/json
+
+{"fen":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1","depth":14}
+```
+
+`fen` is required; `depth` is an integer from 8 to 18 (default 14). A successful non-terminal position returns fields including:
+
+```json
+{
+  "success": true,
+  "status": "analyzed",
+  "fen": "<canonical validated FEN>",
+  "bestMove": "<Stockfish SAN>",
+  "uci": "<Stockfish UCI move>",
+  "piece": "<piece at the source square>",
+  "from": "<source square>",
+  "to": "<destination square>",
+  "evaluation": "<White-perspective score>",
+  "principalVariation": ["<SAN move>", "..."],
+  "alternatives": ["<up to three ranked engine lines>"],
+  "depth": 14,
+  "engine": "Stockfish 19 Lite WASM"
+}
+```
+
+The response includes actual values computed for the submitted FEN. It is not cached. Terminal positions return `status: "finished"` and no move. Invalid positions return HTTP 400. If Stockfish fails or times out, the API returns an error and no move.
+
+#### Screenshot upload
+
+```bash
+curl -X POST "https://your-domain.example/api/analyze" \
+  -F "image=@board-screenshot.jpg" \
+  -F "depth=14"
+```
+
+Multipart image field name: `image`. Supported formats: `image/jpeg`, `image/png`, `image/webp`. Maximum upload: **10 MB**. HEIC must be exported / converted to JPEG by the Shortcut. If a clear square board is found, the response has `success: true`, `status: "needs_review"`, `requiresReview: true`, board bounds, square hints, `fen: null`, and `bestMove: null`. If there is no clear board, the response is HTTP 422. The service does not retain the uploaded bytes.
+
+To analyze a reviewed screenshot position in the same API, submit its complete FEN as JSON. A multipart form may also contain both `image` and `fen`; when `fen` is present it is validated and analyzed.
+
+#### Errors / limits
+
+- 400 — malformed JSON, bad depth, or invalid FEN
+- 413 — body larger than the request cap
+- 415 — unsupported media type / image format
+- 422 — no clear board found in an image
+- 429 — per-process request limit (20 requests per IP per minute)
+- 503 — Stockfish initialization, timeout, or engine result failure
+
+The limiter is deliberately dependency-free and **per process / best effort**. For a public multi-instance deployment, configure a shared edge/Redis rate limit and trusted proxy IP handling. Public endpoints can be abused; use host-level abuse controls appropriate to your deployment.
+
+## iPhone Shortcuts
+
+The website does not install a Shortcut or independently monitor screenshots. iOS versions and device configurations may expose different automation triggers; the automatic workflow below is conditional, not a guaranteed iPhone feature.
+
+### Screenshot automation (where available)
+
+1. In Shortcuts, open **Automation → New Automation** and check whether your device offers a screenshot-related trigger. Follow only the options displayed by your iOS version; no minimum version is claimed here.
+2. If the trigger runs after a screenshot but does not supply its image, use **Find Photos** filtered to screenshots, newest first, limit one. Verify that this selects the intended image before automating uploads.
+3. Pass the image to **Get Contents of URL**. Set URL to `https://your-domain.example/api/analyze`, Method **POST**, Request Body **Form**. Add `image` = screenshot input, and `depth` = `14`.
+4. Show the response with **Show Result** or a notification. For an image-only upload, ChessVision returns `needs_review`, not a move. Continue in the web editor to confirm the position. If no suitable trigger is shown, use the Share Sheet workflow below.
+
+### Share Sheet fallback (manual and broadly compatible)
+
+1. Create a Shortcut named **ChessVision — Analyze Image**.
+2. Open its details, enable **Show in Share Sheet**, and accept Images.
+3. Add **Get Contents of URL** for the endpoint above; set Method **POST**, Request Body **Form**, `image` = Shortcut Input, `depth` = `14`.
+4. Add **Show Result**. For a polished result, check the JSON `status`: show `bestMove` and `evaluation` only for `analyzed`; otherwise show the API `message`.
+5. In Photos, share a chess screenshot to the Shortcut. If iOS shares HEIC, add **Convert Image → JPEG** before upload.
+
+For an immediate best-move response from a Shortcut, it must send a **complete reviewed FEN** using a JSON request rather than an image-only request. A FEN request can be made with **Get Contents of URL**, Method **POST**, Request Body **JSON**, keys `fen` and `depth`. Keep personal tokens out of shortcuts; this API needs no secret by default. Use HTTPS on a public deployment.
+
+## Deployment
+
+- Deploy to a Node.js host (Node 22.12+) with `child_process` enabled, file access to `public/engine`, and sufficient request timeout. Do not use static-only hosting.
+- Preserve the `public/engine` Stockfish files and `licenses/Stockfish-GPL-3.0.txt` in the deploy.
+- Run `npm ci && npm run build && npm start` or build the Docker image.
+- No database is required. The image is not written to disk; browser history is localStorage.
+- If terminating the app behind a reverse proxy, make sure it passes the true client IP safely; do not trust arbitrary forwarded IP headers.
+
+### Stockfish license
+
+The included Stockfish 19 Lite engine is distributed under **GPL-3.0**. The full license text is in `licenses/Stockfish-GPL-3.0.txt`. The engine JavaScript/WASM were taken from the `stockfish@19.0.1` release published by [nmrugg/stockfish.js](https://github.com/nmrugg/stockfish.js), based on [official Stockfish](https://github.com/official-stockfish/Stockfish). Source code and build details are available upstream; preserve the GPL notice and source offer when distributing the application. The rest of the project dependencies retain their own licenses.
+
+## Verification
 
 ```bash
 npm run typecheck
@@ -95,50 +211,10 @@ npm test
 npm run build
 ```
 
-For browser tests, keep the app running in another terminal (`npm run dev` or `npm start` after a build):
+The unit/API suite exercises FEN validation, 64-square reconstruction, checkerboard detection on a synthetic screenshot, no-board handling, multipart uploads, invalid images, real Stockfish WASM search, legal best moves, and MultiPV alternatives. Browser tests cover the landing-to-workspace flow, a real mate-in-one analysis, and mobile overflow. Run them with a local server and installed Playwright browsers:
 
 ```bash
-npx playwright install --with-deps chromium webkit
+npm run dev
+npx playwright install chromium
 npm run test:e2e
 ```
-
-The browser suite covers selections, back navigation, equipment restrictions, invalid API requests, disabled tracking before start, rest controls, persisted progress, workout completion, the empty state, mobile navigation, and horizontal overflow. Tests are isolated with fresh browser contexts. Use `TEST_BASE_URL` to test a different running server.
-
-```bash
-npm run format
-npm audit --omit=dev
-```
-
-### Verified during setup
-
-- Optimized production build, strict TypeScript, and ESLint: passed.
-- **80 unit/API tests** passed, including all **3,780** preference combinations and mocked AI success/failure paths.
-- **12 browser tests** passed across desktop Chromium, phone-sized Chromium, and iPhone-profile WebKit.
-- All five builder steps were checked at **320, 375, 390, 430, 700, 768, 1024, and 1440px** without horizontal overflow.
-- Automated WCAG A/AA checks passed for the landing page, every builder step, and ready/active workout screens. This is an automated check, not an accessibility certification or a physical-iPhone test.
-- `npm audit --omit=dev` reported **0 known production dependency vulnerabilities** at setup.
-
-## API
-
-`POST /api/generate-workout`, with `Content-Type: application/json`:
-
-```json
-{
-  "bodyPart": "Chest",
-  "equipment": "Dumbbells",
-  "experience": "Beginner",
-  "goal": "Muscle Growth",
-  "duration": 45
-}
-```
-
-Success returns `{ "workout": { ... } }`. Invalid values or extra fields return `400`; unsupported media types `415`; bodies over 4 KiB `413`; rate-limited requests `429` with `Retry-After`; unexpected generation failures `503`. Successful responses are not cached.
-
-## Deployment notes
-
-- API keys and the provider SDK stay in `server-only` modules, never client bundles.
-- The request limiter is deliberately dependency-free, **per process / best effort**, not a production-wide quota. Before a public, paid-AI launch, use a shared rate-limit store and enforce provider spending limits; configure your hosting proxy to overwrite forwarded-IP headers. Authentication and abuse controls can be added based on your deployment's needs.
-- No personal data or workout history is sent to OpenAI: only the five training selections and allowed exercise metadata. Workout and progress persistence are device-local, not cloud sync.
-- Static assets and fonts are bundled, so the UI does not rely on third-party image/font CDNs.
-- The generated hero is decorative campaign imagery, not a real member testimonial or an exercise demonstration.
-- This is general fitness information, not an injury-rehabilitation, medical, or individualized professional training service. Bodyweight-only back/biceps sessions explicitly explain the limits of training without a pulling load.

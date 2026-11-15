@@ -1,29 +1,12 @@
-import { ArrowUpRight, HeartPulse } from "lucide-react";
 import Link from "next/link";
-import { Logo } from "./ui/logo";
-import { DISCLAIMER } from "@/lib/utils";
 
 export function Footer() {
   return (
-    <footer className="site-footer page-width">
-      <div className="footer-top">
-        <div>
-          <Logo />
-          <p>Less guesswork. More good reps.</p>
-        </div>
-        <Link href="/#builder" className="footer-link">
-          Your next session starts here <ArrowUpRight size={18} />
-        </Link>
-      </div>
-      <div className="disclaimer">
-        <HeartPulse size={17} aria-hidden="true" />
-        <p>{DISCLAIMER}</p>
-      </div>
-      <div className="footer-bottom">
-        <span>© {new Date().getFullYear()} FitForge. Built for your better.</span>
-        <span>
-          <span className="status-dot" /> Progress over perfection.
-        </span>
+    <footer className="site-footer">
+      <div className="page-width footer-inner">
+        <Link href="/" className="footer-brand"><span aria-hidden="true">♞</span> ChessVision AI</Link>
+        <p>Real Stockfish analysis. Screenshot positions are reviewed before a move is shown.</p>
+        <div className="footer-links"><Link href="/shortcuts">iPhone setup</Link><Link href="/settings">Privacy & settings</Link></div>
       </div>
     </footer>
   );

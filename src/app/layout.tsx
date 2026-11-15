@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { Header } from "@/components/header";
 import { Footer } from "@/components/footer";
-import { WorkoutProvider } from "@/components/workout/workout-provider";
 import "./globals.css";
 
 const dmSans = localFont({
@@ -19,21 +18,22 @@ const barlow = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "FitForge — Build Your Workout. Build Yourself.",
-  description:
-    "Your goals. Your equipment. Your next great workout. Build a personalized training session in five simple steps with FitForge.",
-  applicationName: "FitForge",
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "https://chessvision.ai"),
+  title: { default: "ChessVision AI — See the board. Find the move.", template: "%s · ChessVision AI" },
+  description: "Review a chess screenshot, correct the position, and get genuine Stockfish analysis with a best move, alternatives, evaluation, and principal variation.",
+  applicationName: "ChessVision AI",
   robots: { index: true, follow: true },
   openGraph: {
-    title: "FitForge — Built for your better.",
-    description: "An intelligent workout planner that meets you where you are.",
+    title: "ChessVision AI — See the board. Find the move.",
+    description: "Screenshot-assisted chess position review and real Stockfish analysis.",
     type: "website",
   },
 };
+
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#111312",
+  themeColor: "#0b100f",
   colorScheme: "dark",
 };
 
@@ -41,14 +41,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en" className={`${dmSans.variable} ${barlow.variable}`}>
       <body>
-        <a href="#main-content" className="skip-link">
-          Skip to content
-        </a>
-        <WorkoutProvider>
-          <Header />
-          {children}
-          <Footer />
-        </WorkoutProvider>
+        <a href="#main-content" className="skip-link">Skip to content</a>
+        <Header />
+        {children}
+        <Footer />
       </body>
     </html>
   );

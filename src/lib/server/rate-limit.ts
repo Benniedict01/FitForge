@@ -1,24 +1,31 @@
-// Best-effort, per-instance protection. Use a shared store (e.g. Redis) for a
-// horizontally scaled production deployment; this intentionally adds no service dependency.
-const bucket = new Map<string, { count: number; resetAt: number }>();
-const WINDOW_MS = 60_000;
-const LIMIT = 12;
+type Bucket = { count: number; resetAt: number };
 
-export function checkRateLimit(key: string): { allowed: boolean; retryAfter: number } {
-  const now = Date.now();
-  if (bucket.size > 2_000) {
-    for (const [ip, value] of bucket) if (value.resetAt <= now) bucket.delete(ip);
-    // Bound memory even if untrusted forwarded addresses produce many keys.
-    if (bucket.size > 2_000) bucket.clear();
+const WINDOW_MS = 60_000;
+const MAX_REQUESTS_PER_WINDOW = 20;
+const MAX_BUCKETS = 10_000;
+const buckets = new Map<string, Bucket>();
+
+export function checkRateLimit(key: string, now = Date.now()): { allowed: boolean; retryAfter: number } {
+  const normalizedKey = key.slice(0, 120) || "unknown";
+  let bucket = buckets.get(normalizedKey);
+  if (!bucket || bucket.resetAt <= now) {
+    if (buckets.size >= MAX_BUCKETS) {
+      for (const [entryKey, entry] of buckets) if (entry.resetAt <= now) buckets.delete(entryKey);
+      if (buckets.size >= MAX_BUCKETS) {
+        const oldest = buckets.keys().next().value;
+        if (oldest) buckets.delete(oldest);
+      }
+    }
+    bucket = { count: 0, resetAt: now + WINDOW_MS };
+    buckets.set(normalizedKey, bucket);
   }
-  const current = bucket.get(key);
-  if (!current || current.resetAt <= now) {
-    bucket.set(key, { count: 1, resetAt: now + WINDOW_MS });
-    return { allowed: true, retryAfter: 0 };
-  }
-  current.count += 1;
+  bucket.count += 1;
   return {
-    allowed: current.count <= LIMIT,
-    retryAfter: Math.max(1, Math.ceil((current.resetAt - now) / 1000)),
+    allowed: bucket.count <= MAX_REQUESTS_PER_WINDOW,
+    retryAfter: Math.max(1, Math.ceil((bucket.resetAt - now) / 1000)),
   };
+}
+
+export function resetRateLimitsForTests() {
+  buckets.clear();
 }
