@@ -1,11 +1,12 @@
 {
-  "name": "fitforge",
+  "name": "chessvision-ai",
   "version": "1.0.0",
   "private": true,
+  "description": "Screenshot-assisted chess position review and Stockfish analysis.",
   "scripts": {
     "dev": "next dev --hostname 0.0.0.0",
     "build": "next build",
-    "start": "next start --hostname 0.0.0.0",
+    "start": "node scripts/start-standalone.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -14,19 +15,17 @@
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.0",
-    "clsx": "^2.1.1",
+    "chess.js": "^1.4.0",
     "lucide-react": "^0.468.0",
     "next": "^16.0.0",
-    "openai": "^6.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "server-only": "^0.0.1",
-    "tailwind-merge": "^3.0.0",
+    "sharp": "^0.35.5",
     "zod": "^4.0.0"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
-    "@playwright/test": "^1.56.0",
+    "@playwright/test": "^1.65.1",
     "@types/node": "^22.0.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
@@ -36,9 +35,14 @@
     "tailwindcss": "^4.1.0",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",
-    "vitest": "^3.2.0"
+    "vitest": "^5.1.0"
   },
   "engines": {
-    "node": ">=20.9.0"
+    "node": ">=22.12.0"
+  },
+  "overrides": {
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^11.0.8"
+    }
   }
 }

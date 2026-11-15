@@ -1,17 +1,14 @@
 import Link from "next/link";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
+
 export default function NotFound() {
   return (
-    <main id="main-content" className="page-width">
-      <section className="workout-empty">
-        <div className="eyebrow" style={{ justifyContent: "center" }}>
-          404 · A DIFFERENT DIRECTION
-        </div>
-        <h1>This isn’t your next workout.</h1>
-        <p>That page isn’t here, but a good training session could be.</p>
-        <Link href="/" className="button button-primary">
-          Back to FitForge <ArrowUpRight size={17} />
-        </Link>
+    <main id="main-content" className="page-width error-page">
+      <section className="empty-state-card">
+        <p className="eyebrow">NO POSITION HERE</p>
+        <h1>We can’t find that page.</h1>
+        <p>Head back to the board and continue your analysis.</p>
+        <Link href="/" className="button button-primary"><ArrowLeft size={16} /> Back to ChessVision</Link>
       </section>
     </main>
   );
